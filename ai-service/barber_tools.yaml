@@ -1,0 +1,9 @@
+path: datasets/barber_tools
+train: images/train
+val: images/val
+names:
+  0: maquina_cortar
+  1: tijeras
+  2: peine
+  3: secadora
+  4: navaja

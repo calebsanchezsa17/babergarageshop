@@ -1,0 +1,1 @@
+import React from 'react';export default function PageHeader({eyebrow='BARBER GARAGE',title,subtitle,action}){return <header className="page-header"><div><span className="eyebrow">{eyebrow}</span><h1>{title}</h1>{subtitle&&<p>{subtitle}</p>}</div>{action&&<div>{action}</div>}</header>}
