@@ -1,6 +1,7 @@
 package com.barbergarage.config;
 
 import com.barbergarage.security.JwtAuthFilter;
+
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -11,6 +12,7 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
@@ -21,102 +23,104 @@ import java.util.List;
 @Configuration
 public class SecurityConfig {
 
-    @Bean
-    PasswordEncoder passwordEncoder() {
-        return new BCryptPasswordEncoder();
-    }
+        @Bean
+        public PasswordEncoder passwordEncoder() {
+                return new BCryptPasswordEncoder();
+        }
 
-    @Bean
-    CorsConfigurationSource cors(
-            @Value("${app.cors.allowed-origins}") String origins) {
+        @Bean
+        public CorsConfigurationSource corsConfigurationSource(
+                        @Value("${app.cors.allowed-origins}") String origins) {
 
-        CorsConfiguration config = new CorsConfiguration();
+                CorsConfiguration config = new CorsConfiguration();
 
-        List<String> allowedOrigins = Arrays.stream(origins.split(","))
-                .map(String::trim)
-                .filter(origin -> !origin.isBlank())
-                .toList();
+                List<String> allowedOrigins = Arrays.stream(origins.split(","))
+                                .map(String::trim)
+                                .filter(origin -> !origin.isBlank())
+                                .toList();
 
-        config.setAllowedOrigins(allowedOrigins);
+                // Importante para Railway y credenciales
+                config.setAllowedOriginPatterns(allowedOrigins);
 
-        config.setAllowedMethods(List.of(
-                "GET",
-                "POST",
-                "PUT",
-                "PATCH",
-                "DELETE",
-                "OPTIONS"));
+                config.setAllowedMethods(List.of(
+                                "GET",
+                                "POST",
+                                "PUT",
+                                "PATCH",
+                                "DELETE",
+                                "OPTIONS"));
 
-        config.setAllowedHeaders(List.of("*"));
+                config.setAllowedHeaders(List.of(
+                                "Authorization",
+                                "Content-Type",
+                                "Accept",
+                                "Origin",
+                                "X-Requested-With"));
 
-        config.setExposedHeaders(List.of(
-                "Authorization",
-                "Content-Type"));
+                config.setExposedHeaders(List.of(
+                                "Authorization"));
 
-        config.setAllowCredentials(true);
+                config.setAllowCredentials(true);
 
-        config.setMaxAge(3600L);
+                // Cache del preflight durante 1 hora
+                config.setMaxAge(3600L);
 
-        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+                UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
 
-        source.registerCorsConfiguration("/**", config);
+                source.registerCorsConfiguration("/**", config);
 
-        return source;
-    }
+                return source;
+        }
 
-    @Bean
-    SecurityFilterChain filter(
-            HttpSecurity http,
-            JwtAuthFilter jwt) throws Exception {
+        @Bean
+        public SecurityFilterChain securityFilterChain(
+                        HttpSecurity http,
+                        JwtAuthFilter jwtAuthFilter,
+                        CorsConfigurationSource corsConfigurationSource) throws Exception {
 
-        http
-                .csrf(csrf -> csrf.disable())
+                http
+                                .csrf(csrf -> csrf.disable())
 
-                .cors(cors -> {
-                })
+                                // Usar explícitamente nuestra configuración CORS
+                                .cors(cors -> cors.configurationSource(corsConfigurationSource))
 
-                .sessionManagement(session -> session.sessionCreationPolicy(
-                        SessionCreationPolicy.STATELESS))
+                                .sessionManagement(session -> session.sessionCreationPolicy(
+                                                SessionCreationPolicy.STATELESS))
 
-                .authorizeHttpRequests(auth -> auth
+                                .authorizeHttpRequests(auth -> auth
 
-                        // IMPORTANTE PARA CORS
-                        .requestMatchers(HttpMethod.OPTIONS, "/**")
-                        .permitAll()
+                                                // Preflight CORS
+                                                .requestMatchers(HttpMethod.OPTIONS, "/**")
+                                                .permitAll()
 
-                        // LOGIN
-                        .requestMatchers(
-                                "/api/auth/login")
-                        .permitAll()
+                                                // Login
+                                                .requestMatchers("/api/auth/login")
+                                                .permitAll()
 
-                        // RUTAS PÚBLICAS
-                        .requestMatchers(
-                                "/api/public/**")
-                        .permitAll()
+                                                // Branding y rutas públicas
+                                                .requestMatchers("/api/public/**")
+                                                .permitAll()
 
-                        // SERVICIO IA
-                        .requestMatchers(
-                                "/api/ai/**")
-                        .permitAll()
+                                                // IA
+                                                .requestMatchers("/api/ai/**")
+                                                .permitAll()
 
-                        // ACTUATOR
-                        .requestMatchers(
-                                "/actuator/**")
-                        .permitAll()
+                                                // Health / actuator
+                                                .requestMatchers("/actuator/**")
+                                                .permitAll()
 
-                        // ADMIN
-                        .requestMatchers(
-                                "/api/admin/**")
-                        .hasRole("ADMIN")
+                                                // Administrador
+                                                .requestMatchers("/api/admin/**")
+                                                .hasRole("ADMIN")
 
-                        // RESTO
-                        .anyRequest()
-                        .authenticated())
+                                                // Todo lo demás necesita JWT
+                                                .anyRequest()
+                                                .authenticated())
 
-                .addFilterBefore(
-                        jwt,
-                        UsernamePasswordAuthenticationFilter.class);
+                                .addFilterBefore(
+                                                jwtAuthFilter,
+                                                UsernamePasswordAuthenticationFilter.class);
 
-        return http.build();
-    }
+                return http.build();
+        }
 }
