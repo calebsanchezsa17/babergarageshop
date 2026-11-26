@@ -18,10 +18,69 @@ CONF=float(os.getenv("AI_CONF","0.25")); MIN_SERVICE=int(os.getenv("MIN_SERVICE_
 ROI=tuple(float(x) for x in os.getenv("CHAIR_ROI","0.22,0.25,0.78,0.95").split(","))
 CUSTOM=os.getenv("CUSTOM_TOOLS_MODEL","models/barber_tools.pt"); POSE_PATH=os.getenv("POSE_MODEL","yolov8n-pose.pt"); WORLD_PATH=os.getenv("WORLD_MODEL","yolov8s-worldv2.pt")
 lock=threading.Lock(); custom_model=pose_model=world_model=None
-TOOL_PROMPTS=["hair clipper","barber clipper","hair trimmer","scissors","hairdressing scissors","comb","hair dryer","blow dryer","razor"]
-ALIASES={"hair clipper":"maquina_cortar","barber clipper":"maquina_cortar","hair trimmer":"maquina_cortar","clipper":"maquina_cortar","scissors":"tijeras","hairdressing scissors":"tijeras","comb":"peine","hair dryer":"secadora","blow dryer":"secadora","razor":"navaja","maquina_cortar":"maquina_cortar","tijeras":"tijeras","peine":"peine","secadora":"secadora","navaja":"navaja"}
-DISPLAY={"maquina_cortar":"Máquina de cortar","tijeras":"Tijeras","peine":"Peine","secadora":"Secadora","navaja":"Navaja"}
-sessions=defaultdict(lambda:{"seated_since":None,"last_seen":None,"qualified":False,"last_tools":{},"last_event":{}})
+TOOL_PROMPTS = [
+    "hair comb",
+    "barber comb",
+    "hair cutting scissors",
+    "professional barber scissors",
+    "electric hair clipper",
+    "professional hair trimmer",
+    "hair dryer",
+    "professional blow dryer",
+    "straight razor",
+    "barber shavette",
+    "barber razor"
+]
+ALIASES = {
+    "hair comb": "peine",
+    "barber comb": "peine",
+    "comb": "peine",
+    "peine": "peine",
+
+    "hair cutting scissors": "tijeras",
+    "professional barber scissors": "tijeras",
+    "hairdressing scissors": "tijeras",
+    "scissors": "tijeras",
+    "tijera": "tijeras",
+    "tijeras": "tijeras",
+
+    "electric hair clipper": "maquina_cortar",
+    "professional hair trimmer": "maquina_cortar",
+    "hair clipper": "maquina_cortar",
+    "barber clipper": "maquina_cortar",
+    "hair trimmer": "maquina_cortar",
+    "clipper": "maquina_cortar",
+    "maquina de cortar": "maquina_cortar",
+    "maquina_cortar": "maquina_cortar",
+
+    "hair dryer": "secadora",
+    "professional blow dryer": "secadora",
+    "blow dryer": "secadora",
+    "secador": "secadora",
+    "secadora": "secadora",
+
+    "straight razor": "navaja",
+    "barber shavette": "navaja",
+    "barber razor": "navaja",
+    "razor": "navaja",
+    "navaja": "navaja"
+}
+DISPLAY = {
+    "maquina_cortar": "Máquina de cortar",
+    "tijeras": "Tijeras",
+    "peine": "Peine",
+    "secadora": "Secador",
+    "navaja": "Navaja"
+}
+sessions = defaultdict(lambda: {
+    "seated_since": None,
+    "last_seen": None,
+    "qualified": False,
+    "last_tools": {},
+    "last_event": {},
+    "tool_seconds": {},
+    "last_frame_at": None
+})
 face_cascade=cv2.CascadeClassifier(cv2.data.haarcascades+"haarcascade_frontalface_default.xml")
 
 def get_models():
@@ -159,27 +218,195 @@ async def face_presence(file:UploadFile=File(...)):
  img=decode(await file.read());return face_quality(img)
 
 @app.post('/analyze-frame')
-async def analyze_frame(file:UploadFile=File(...),barber_id:int=Form(...),station:str=Form('Estacion_1'),expected_uniform_color:Optional[str]=Form(None)):
- img=decode(await file.read()); now=time.time(); p=pose_info(img); face=face_quality(img); tools=detect_tools(img); state=sessions[station]
- clothing=color_match(img,p.get("barberBox"),expected_uniform_color)
- if p['clientSeated']:
-  if state['seated_since'] is None: state['seated_since']=now;maybe_emit(state,'seated',20,barber_id,station,'CLIENTE_SENTADO',detail='Cliente detectado dentro de la zona de silla')
-  state['last_seen']=now
- else:
-  if state['last_seen'] and now-state['last_seen']>IDLE:
-   if state['seated_since'] is not None: maybe_emit(state,'finished',5,barber_id,station,'SERVICIO_FINALIZADO',duration=int(now-state['seated_since']),detail='Cliente dejó la zona de atención')
-   state.update({"seated_since":None,"last_seen":None,"qualified":False,"last_tools":{},"last_event":{}})
- for t in tools:
-  state['last_tools'][t['key']]=now;maybe_emit(state,'tool:'+t['key'],8,barber_id,station,'HERRAMIENTA_DETECTADA',tool=t['key'],confidence=t['confidence'],detail=t['label'])
- elapsed=int(now-state['seated_since']) if state['seated_since'] else 0
- active_tool=any(now-v<5 for v in state['last_tools'].values())
- if state['seated_since'] and active_tool and elapsed>=MIN_SERVICE and not state['qualified']:
-  state['qualified']=True;post_event(barber_id,station,'CORTE_CONTABILIZADO',action='Servicio mínimo alcanzado',duration=elapsed,detail=f'Servicio contabilizado al superar {MIN_SERVICE} segundos con actividad de herramientas')
- action=None
- keys={x['key'] for x in tools}
- if 'peine' in keys:action='PEINADO / ACOMODO'
- elif 'maquina_cortar' in keys:action='CORTE CON MÁQUINA'
- elif 'tijeras' in keys:action='CORTE CON TIJERAS'
- elif 'secadora' in keys:action='SECADO / MOLDEADO'
- if action:maybe_emit(state,'action:'+action,10,barber_id,station,'MOVIMIENTO_DETECTADO',action=action,duration=elapsed)
- return {**p,**face,**clothing,"tools":tools,"action":action,"serviceSeconds":elapsed,"qualifiedCut":state['qualified'],"minimumSeconds":MIN_SERVICE,"station":station,"privacyMode":"No facial identity; face presence only","modelDiagnostics":{"customModel":custom_model is not None,"poseModel":pose_model is not None,"worldModel":world_model is not None}}
+async def analyze_frame(
+    file: UploadFile = File(...),
+    barber_id: int = Form(...),
+    station: str = Form('Estacion_1'),
+    expected_uniform_color: Optional[str] = Form(None)
+):
+    img = decode(await file.read())
+    now = time.time()
+
+    p = pose_info(img)
+    face = face_quality(img)
+    tools = detect_tools(img)
+
+    state = sessions[station]
+
+    clothing = color_match(
+        img,
+        p.get("barberBox"),
+        expected_uniform_color
+    )
+
+    # Detectar cliente en la silla
+    if p["clientSeated"]:
+
+        if state["seated_since"] is None:
+            state["seated_since"] = now
+
+            maybe_emit(
+                state,
+                "seated",
+                20,
+                barber_id,
+                station,
+                "CLIENTE_SENTADO",
+                detail="Cliente detectado en la silla"
+            )
+
+        state["last_seen"] = now
+
+    else:
+        if state["last_seen"] and now - state["last_seen"] > IDLE:
+
+            if state["seated_since"] is not None:
+                post_event(
+                    barber_id,
+                    station,
+                    "SERVICIO_FINALIZADO",
+                    duration=int(now - state["seated_since"]),
+                    detail="Atención finalizada"
+                )
+
+            state.update({
+                "seated_since": None,
+                "last_seen": None,
+                "qualified": False,
+                "last_tools": {},
+                "last_event": {},
+                "tool_seconds": {},
+                "last_frame_at": None
+            })
+
+    # Calcular intervalo entre fotogramas
+    previous_frame = state["last_frame_at"]
+
+    delta = 0.0
+
+    if previous_frame is not None and p["clientSeated"]:
+        delta = min(max(now - previous_frame, 0), 1.5)
+
+    state["last_frame_at"] = now
+
+    detected_keys = {t["key"] for t in tools}
+
+    # Acumular segundos por herramienta
+    if p["clientSeated"]:
+
+        for t in tools:
+
+            key = t["key"]
+
+            state["tool_seconds"][key] = (
+                state["tool_seconds"].get(key, 0) + delta
+            )
+
+            state["last_tools"][key] = now
+
+            maybe_emit(
+                state,
+                "tool:" + key,
+                8,
+                barber_id,
+                station,
+                "HERRAMIENTA_DETECTADA",
+                tool=key,
+                confidence=t["confidence"],
+                detail=t["label"]
+            )
+
+    # Tiempo total del servicio
+    elapsed = 0
+
+    if state["seated_since"] is not None:
+        elapsed = int(now - state["seated_since"])
+
+    # Comprobar actividad reciente
+    active_tool = any(
+        now - value < 2
+        for value in state["last_tools"].values()
+    )
+
+    if (
+        state["seated_since"] is not None
+        and active_tool
+        and elapsed >= MIN_SERVICE
+        and not state["qualified"]
+    ):
+        state["qualified"] = True
+
+        post_event(
+            barber_id,
+            station,
+            "CORTE_CONTABILIZADO",
+            action="Servicio mínimo alcanzado",
+            duration=elapsed,
+            detail="Servicio contabilizado"
+        )
+
+    # Identificar actividad
+    action = None
+
+    if "peine" in detected_keys:
+        action = "PEINADO / ACOMODO"
+    elif "maquina_cortar" in detected_keys:
+        action = "CORTE CON MÁQUINA"
+    elif "tijeras" in detected_keys:
+        action = "CORTE CON TIJERAS"
+    elif "secadora" in detected_keys:
+        action = "SECADO / MOLDEADO"
+    elif "navaja" in detected_keys:
+        action = "AFEITADO / PERFILADO"
+
+    if action:
+        maybe_emit(
+            state,
+            "action:" + action,
+            10,
+            barber_id,
+            station,
+            "MOVIMIENTO_DETECTADO",
+            action=action,
+            duration=elapsed
+        )
+
+    # Preparar estadísticas de herramientas
+    tool_usage = []
+
+    for key, label in DISPLAY.items():
+
+        seconds = int(state["tool_seconds"].get(key, 0))
+
+        tool_usage.append({
+            "key": key,
+            "label": label,
+            "seconds": seconds,
+            "time": f"{seconds // 60:02d}:{seconds % 60:02d}",
+            "active": key in detected_keys and p["clientSeated"]
+        })
+
+    # Añadir tiempo a las detecciones actuales
+    for t in tools:
+        t["usageSeconds"] = int(
+            state["tool_seconds"].get(t["key"], 0)
+        )
+
+    return {
+        **p,
+        **face,
+        **clothing,
+        "tools": tools,
+        "toolUsage": tool_usage,
+        "action": action,
+        "serviceSeconds": elapsed,
+        "qualifiedCut": state["qualified"],
+        "minimumSeconds": MIN_SERVICE,
+        "station": station,
+        "privacyMode": "No facial identity; face presence only",
+        "modelDiagnostics": {
+            "customModel": custom_model is not None,
+            "poseModel": pose_model is not None,
+            "worldModel": world_model is not None
+        }
+    }
