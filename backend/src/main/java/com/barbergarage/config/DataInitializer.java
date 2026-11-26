@@ -1,3 +1,4 @@
+
 package com.barbergarage.config;
 
 import com.barbergarage.entity.*;
@@ -9,13 +10,59 @@ import org.springframework.stereotype.Component;
 
 @Component
 public class DataInitializer implements CommandLineRunner {
-    private final UserRepository users; private final BrandingSettingsRepository branding; private final PasswordEncoder encoder;
-    @Value("${app.admin.username}") String username; @Value("${app.admin.email}") String email; @Value("${app.admin.password}") String password; @Value("${app.admin.full-name}") String fullName;
-    public DataInitializer(UserRepository users,BrandingSettingsRepository branding,PasswordEncoder encoder){this.users=users;this.branding=branding;this.encoder=encoder;}
-    @Override public void run(String... args){
-        if(users.findByUsernameIgnoreCase(username).isEmpty()){
-            UserAccount u=new UserAccount();u.setFullName(fullName);u.setEmail(email);u.setUsername(username);u.setPasswordHash(encoder.encode(password));u.setRole(Role.ADMIN);u.setStatus(AccountStatus.ACTIVE);u.setOnboardingComplete(true);users.save(u);
+
+    private final UserRepository users;
+    private final BrandingSettingsRepository branding;
+    private final PasswordEncoder encoder;
+
+    @Value("${app.admin.username}")
+    String username;
+
+    @Value("${app.admin.email}")
+    String email;
+
+    @Value("${app.admin.password}")
+    String password;
+
+    @Value("${app.admin.full-name}")
+    String fullName;
+
+    public DataInitializer(
+            UserRepository users,
+            BrandingSettingsRepository branding,
+            PasswordEncoder encoder) {
+        this.users = users;
+        this.branding = branding;
+        this.encoder = encoder;
+    }
+
+    @Override
+    public void run(String... args) {
+
+        UserAccount admin = users.findByUsernameIgnoreCase(username)
+                .or(() -> users.findByEmailIgnoreCase(email))
+                .orElse(null);
+
+        if (admin == null) {
+            admin = new UserAccount();
+            admin.setFullName(fullName);
+            admin.setEmail(email);
+            admin.setUsername(username);
+            admin.setRole(Role.ADMIN);
+            admin.setStatus(AccountStatus.ACTIVE);
+            admin.setOnboardingComplete(true);
         }
-        if(branding.findById(1L).isEmpty()) branding.save(new BrandingSettings());
+
+        // Actualizar contraseña del administrador
+        admin.setPasswordHash(encoder.encode(password));
+        admin.setFailedAttempts(0);
+        admin.setLockedUntil(null);
+        admin.setStatus(AccountStatus.ACTIVE);
+
+        users.save(admin);
+
+        if (branding.findById(1L).isEmpty()) {
+            branding.save(new BrandingSettings());
+        }
     }
 }
